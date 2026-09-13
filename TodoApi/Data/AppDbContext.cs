@@ -5,5 +5,5 @@ namespace TodoApi.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
-    public DbSet<TodoItem> TodoItem => Set<TodoItem>();
+    public DbSet<TodoItem> Todos => Set<TodoItem>();
 }
