@@ -104,16 +104,20 @@ var todoGroup = app.MapGroup("/api/todos").WithTags("Todos");
 
 todoGroup.MapGet("/", async (AppDbContext db) =>
 {
-    var todos = await db.Todos
-        .AsNoTracking()
-        .OrderBy(todo => todo.Id)
-        .Select(todo => new TodoGetDto(todo.Id, todo.Title, todo.IsCompleted))
-        .ToListAsync();
+    var todos = await db.Todos.ToListAsync();
 
-    return Results.Ok(todos);
+    var todoGetDtos = todos.Select(t =>
+        new TodoGetDto(
+            t.Id,
+            t.Title,
+            t.IsCompleted));
+
+    return todoGetDtos.Count() == 0
+        ? Results.NotFound()
+        : Results.Ok(todoGetDtos);
 });
 
-todoGroup.MapPost("/", async (TodoPostDto dto, AppDbContext db) =>
+todoGroup.MapPost("/", async (AppDbContext db, TodoPostDto dto) =>
 {
     if (string.IsNullOrWhiteSpace(dto.Title))
     {
@@ -123,8 +127,14 @@ todoGroup.MapPost("/", async (TodoPostDto dto, AppDbContext db) =>
         });
     }
 
+    var lastTodo = await db.Todos
+        .OrderByDescending(t => t.Id)
+        .FirstOrDefaultAsync();
+    var nextId = lastTodo is null ? 1 : lastTodo.Id + 1;
+
     var todo = new TodoItem
     {
+        Id = nextId,
         Title = dto.Title.Trim(),
         IsCompleted = false,
         CreatedAt = DateTime.UtcNow
