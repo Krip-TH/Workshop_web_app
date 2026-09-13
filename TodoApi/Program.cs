@@ -1,12 +1,52 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.EntityFrameworkCore;
+
+using TodoApi.Data;
 using TodoApi.Dtos;
+using TodoApi.Models;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT key is not configured.");
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(jwtKey))
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.EnsureCreated();
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -15,76 +55,167 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseAuthentication();
+app.UseAuthorization();
 
 var todoGroup = app.MapGroup("/api/todos").WithTags("Todos");
 
-var todos = new List<TodoGetDto>
-{
-    new TodoGetDto(1, "Learn C#", true),
-    new TodoGetDto(2, "Learn ASP.NET Core", false),
-    new TodoGetDto(3, "Build a web API", false)
-};  
+#region In-memory Endpoint
 
-todoGroup.MapGet("/", () => Results.Ok(todos));
+// var todos = new List<TodoGetDto>
+// {
+//     new TodoGetDto(1, "Learn C#", true),
+//     new TodoGetDto(2, "Learn ASP.NET Core", false),
+//     new TodoGetDto(3, "Build a web API", false)
+// };
 
-todoGroup.MapGet("/{id}", (int id) =>
-{
-    var todo = todos.FirstOrDefault(t => t.Id == id);
+// todoGroup.MapGet("/", () => Results.Ok(todos));
 
-    return todo is not null ? Results.Ok(todo) : Results.NotFound();
+// todoGroup.MapGet("/{id}", (int id) =>
+// {
+//     var todo = todos.FirstOrDefault(t => t.Id == id);
+
+//     return todo is not null ? Results.Ok(todo) : Results.NotFound();
         
-});
+// });
     
-    todoGroup.MapPost("/", (TodoPostDto dto) =>
-    {
-        var nextId = todos.Count == 0 ? 1 : todos.Max(t => t.Id) + 1;
+//     todoGroup.MapPost("/", (TodoPostDto dto) =>
+//     {
+//         var nextId = todos.Count == 0 ? 1 : todos.Max(t => t.Id) + 1;
 
-        var todo = new TodoGetDto(nextId, dto.Title, false);
-        todos.Add(todo);
+//         var todo = new TodoGetDto(nextId, dto.Title, false);
+//         todos.Add(todo);
 
-        return Results.Created($"/api/todos/{todo.Id}", todo);
-    });
+//         return Results.Created($"/api/todos/{todo.Id}", todo);
+//     });
 
-todoGroup.MapPut("/{id}", (int id, TodoPutDto dto) =>
+// todoGroup.MapPut("/{id}", (int id, TodoPutDto dto) =>
+// {
+//     try
+//     {
+//         var index = todos.FindIndex(t => t.Id == id);
+//         if (index == -1) return Results.NotFound();
+
+//         todos[index] = todos[index] with
+//         {
+//             Title = dto.Title,
+//             IsCompleted = dto.IsCompleted
+//         };
+
+//         return Results.Ok(todos[index]);
+//     }
+//     catch (Exception ex)
+//     {
+//         return Results.Problem(ex.Message);
+//     }
+// });
+
+// todoGroup.MapDelete("/{id}", (int id) =>
+// {
+//     try
+//     {
+//         var todo = todos.FirstOrDefault(t => t.Id == id);
+//         if (todo is null) return Results.NotFound();
+
+//         todos.Remove(todo);
+//         return Results.NoContent();
+//     }
+//     catch(ArgumentNullException ex)
+//     {
+//         return Results.Problem($"Parameter is null: {ex.ParamName}");
+//     }
+//     catch (Exception ex)
+//     {
+//         return Results.Problem(ex.Message);
+//     }
+
+// });
+
+#endregion
+
+#region Database Endpoints
+todoGroup.MapGet("/", async (AppDbContext db) =>
 {
-    try
-    {
-        var index = todos.FindIndex(t => t.Id == id);
-        if (index == -1) return Results.NotFound();
+    var todos = await db.TodoItem
+        .AsNoTracking()
+        .ToListAsync();
 
-        todos[index] = todos[index] with
+    var todoGetDtos = todos.Select(t =>
+                            new TodoGetDto(
+                                t.Id,
+                                t.Title,
+                                t.IsCompleted
+                            ));
+
+    return todos.Count == 0 ? Results.NotFound() : Results.Ok(todoGetDtos);
+});
+todoGroup.MapPost("/", async (AppDbContext db, TodoPostDto dto) =>
+{
+    if (string.IsNullOrWhiteSpace(dto.Title))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
         {
-            Title = dto.Title,
-            IsCompleted = dto.IsCompleted 
-        };
-
-        return Results.Ok(todos[index]);
+            [nameof(dto.Title)] = ["Title is required."]
+        });
     }
-    catch (Exception ex)
+
+    var lastTodo = await db.TodoItem.OrderByDescending(t => t.Id).FirstOrDefaultAsync();
+    var nextId = lastTodo is null ? 1 : lastTodo.Id + 1;
+
+    var todo = new TodoItem
     {
-        return Results.Problem(ex.Message);
-    }
-});
+        Id = nextId,
+        Title = dto.Title.Trim(),
+        IsCompleted = false,
+        CreatedAt = DateTime.UtcNow
+    };
+    db.TodoItem.Add(todo);
+    await db.SaveChangesAsync();
 
-todoGroup.MapDelete("/{id}", (int id) =>
+    var todoGetDto = new TodoGetDto(todo.Id, todo.Title, todo.IsCompleted);
+
+    return Results.Created($"/api/todos/{todo.Id}", todoGetDto);
+});
+#endregion
+
+#region  Authentication Endpoints
+
+app.MapPost("/api/auth/login", (
+    LoginDto login,
+    IConfiguration configuration) =>
 {
-    try
-    {
-        var todo = todos.FirstOrDefault(t => t.Id == id);
-        if (todo is null) return Results.NotFound();
+    if (login.Username != "student" || login.Password != "password")
+        return Results.Unauthorized();
 
-        todos.Remove(todo);
-        return Results.NoContent();
-    }
-    catch(ArgumentNullException ex)
+    var claims = new[]
     {
-        return Results.Problem($"Parameter is null: {ex.ParamName}");
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem(ex.Message);
-    }
+        new Claim(ClaimTypes.Name, login.Username)
+    };
 
-});
+    var key = new SymmetricSecurityKey(
+        Encoding.UTF8.GetBytes(configuration["Jwt:Key"]!));
 
+    var credentials = new SigningCredentials(
+        key,
+        SecurityAlgorithms.HmacSha256);
+
+    var expireDays = int.Parse(configuration["Jwt:ExpireDays"]!);
+    var expiration = DateTime.UtcNow.AddDays(expireDays);
+
+    var token = new JwtSecurityToken(
+        issuer: configuration["Jwt:Issuer"],
+        audience: configuration["Jwt:Audience"],
+        claims: claims,
+        expires: expiration,
+        signingCredentials: credentials);
+
+    var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+    return Results.Ok(new LoginResponseDto(tokenString, expiration));
+})
+.WithTags("Authentication")
+.WithName("Login")
+.Produces<LoginResponseDto>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status401Unauthorized);
+
+#endregion
 app.Run();
