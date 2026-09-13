@@ -68,7 +68,8 @@ todoGroup.MapGet("/", async (AppDbContext db) =>
         .ToListAsync();
 
     return todos.Count == 0 ? Results.NotFound() : Results.Ok(todos);
-});
+})
+.RequireAuthorization();
 
 todoGroup.MapPost("/", async (AppDbContext db, TodoPostDto dto) =>
 {
@@ -97,7 +98,8 @@ todoGroup.MapPost("/", async (AppDbContext db, TodoPostDto dto) =>
 
     var response = new TodoGetDto(todo.Id, todo.Title, todo.IsCompleted);
     return Results.Created($"/api/todos/{todo.Id}", response);
-});
+})
+.RequireAuthorization();
 
 app.MapPost("/api/auth/login", (
     LoginDto login,
