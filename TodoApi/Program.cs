@@ -8,14 +8,14 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-builder.Services.AddDbContext<TodoDbContext>(options =>
+builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("TodoDatabase")));
 
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<TodoDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
 }
 
@@ -102,7 +102,7 @@ var todoGroup = app.MapGroup("/api/todos").WithTags("Todos");
 
 #region Database Endpoint
 
-todoGroup.MapGet("/", async (TodoDbContext db) =>
+todoGroup.MapGet("/", async (AppDbContext db) =>
 {
     var todos = await db.Todos
         .AsNoTracking()
@@ -113,7 +113,7 @@ todoGroup.MapGet("/", async (TodoDbContext db) =>
     return Results.Ok(todos);
 });
 
-todoGroup.MapPost("/", async (TodoPostDto dto, TodoDbContext db) =>
+todoGroup.MapPost("/", async (TodoPostDto dto, AppDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(dto.Title))
     {
