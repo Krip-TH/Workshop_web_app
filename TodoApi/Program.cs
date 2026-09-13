@@ -16,6 +16,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+var todoGroup = app.MapGroup("/api/todos").WithTags("Todos");
+
 var todos = new List<TodoGetDto>
 {
     new TodoGetDto(1, "Learn C#", true),
@@ -23,9 +25,9 @@ var todos = new List<TodoGetDto>
     new TodoGetDto(3, "Build a web API", false)
 };  
 
-app.MapGet("/api/todos", () => Results.Ok(todos));
+todoGroup.MapGet("/", () => Results.Ok(todos));
 
-app.MapGet("/api/todos/{id}", (int id) =>
+todoGroup.MapGet("/{id}", (int id) =>
 {
     var todo = todos.FirstOrDefault(t => t.Id == id);
 
@@ -33,7 +35,7 @@ app.MapGet("/api/todos/{id}", (int id) =>
         
 });
     
-    app.MapPost("/api/todos", (TodoPostDto dto) =>
+    todoGroup.MapPost("/", (TodoPostDto dto) =>
     {
         var nextId = todos.Count == 0 ? 1 : todos.Max(t => t.Id) + 1;
 
@@ -43,7 +45,7 @@ app.MapGet("/api/todos/{id}", (int id) =>
         return Results.Created($"/api/todos/{todo.Id}", todo);
     });
 
-app.MapPut("/api/todos/{id}", (int id, TodoPutDto dto) =>
+todoGroup.MapPut("/{id}", (int id, TodoPutDto dto) =>
 {
     try
     {
@@ -64,7 +66,7 @@ app.MapPut("/api/todos/{id}", (int id, TodoPutDto dto) =>
     }
 });
 
-app.MapDelete("/api/todos/{id}", (int id) =>
+todoGroup.MapDelete("/{id}", (int id) =>
 {
     try
     {
